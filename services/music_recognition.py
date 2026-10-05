@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -16,29 +17,30 @@ except ImportError:
 
 
 class MusicRecognizer:
-    """Videodan musiqa nomini aniqlash servisi (FFmpeg + Shazamio)."""
+    """Videodan yoki audiodan musiqa nomini aniqlash servisi (FFmpeg + Shazamio)."""
 
     def __init__(self):
         self._shazam = Shazam() if HAS_SHAZAMIO else None
 
-    async def extract_audio_sample(self, video_path: Path, output_audio_path: Path, duration: int = 15) -> bool:
+    async def extract_audio_sample(self, media_path: Path, output_audio_path: Path, duration: int = 15) -> bool:
         """
-        FFmpeg yordamida videoning dastlabki 10-15 soniyasidan audio kesib oladi.
+        FFmpeg yordamida medianing dastlabki 10-15 soniyasidan audio kesib oladi.
         """
         try:
+            ffmpeg_exe = shutil.which("ffmpeg") or "ffmpeg"
             cmd = [
-                "ffmpeg",
+                ffmpeg_exe,
                 "-y",  # mavjud faylni qayta yozish
                 "-ss", "00:00:00",
                 "-t", str(duration),
-                "-i", str(video_path),
+                "-i", str(media_path.resolve()),
                 "-vn",  # video oqimini olib tashlash
                 "-acodec", "libmp3lame",
                 "-ar", "44100",
                 "-ac", "2",
-                str(output_audio_path)
+                str(output_audio_path.resolve())
             ]
-            
+
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.DEVNULL,
@@ -50,29 +52,29 @@ class MusicRecognizer:
             logger.error(f"FFmpeg orqali audio kesishda xatolik: {e}")
             return False
 
-    async def recognize_music_from_video(self, video_path: Path) -> Optional[str]:
+    async def recognize_music_from_video(self, media_path: Path) -> Optional[str]:
         """
-        Videodan audioni ajratib olib Shazam orqali musiqani aniqlaydi.
+        Media (video yoki audio) faylidan audioni ajratib olib Shazam orqali musiqani aniqlaydi.
         Qaytaradi: "Ijrochi - Qo'shiq nomi" yoki None.
         """
         if not HAS_SHAZAMIO or not self._shazam:
             logger.info("Shazamio mavjud emasligi sababli audio aniqlash o'tkazib yuborildi.")
             return None
 
-        if not video_path.exists() or video_path.stat().st_size == 0:
+        if not media_path.exists() or media_path.stat().st_size == 0:
             return None
 
         # Vaqtinchalik audio fayl yo'li
-        sample_audio_path = video_path.with_name(f"sample_{video_path.stem}.mp3")
+        sample_audio_path = media_path.with_name(f"sample_{media_path.stem}.mp3")
 
         try:
             # 1. 15 soniyalik audio kesib olish
-            extracted = await self.extract_audio_sample(video_path, sample_audio_path, duration=15)
+            extracted = await self.extract_audio_sample(media_path, sample_audio_path, duration=15)
             if not extracted:
                 return None
 
             # 2. Shazamio orqali trekni qidirish
-            recognition = await self._shazam.recognize(str(sample_audio_path))
+            recognition = await self._shazam.recognize(str(sample_audio_path.resolve()))
             if not recognition:
                 return None
 
@@ -80,7 +82,7 @@ class MusicRecognizer:
             if track:
                 title = track.get("title")
                 subtitle = track.get("subtitle")  # Ijrochi nomi
-                
+
                 if subtitle and title:
                     return f"{subtitle} - {title}"
                 elif title:
